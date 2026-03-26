@@ -41,9 +41,9 @@ quando esta skill for ativada...
 
 ```
 .agents/skills/
-├── prd-manager/
+├── duda/
 │   └── SKILL.md
-├── code-analyzer/
+├── prof-lina/
 │   └── SKILL.md
 └── README.md
 ```

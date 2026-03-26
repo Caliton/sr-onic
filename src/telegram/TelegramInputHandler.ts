@@ -17,6 +17,7 @@ export interface ProcessedInput {
   userId: string;
   chatId: number;
   requiresAudioReply: boolean;
+  voiceId?: string;
   ctx: Context;
 }
 
@@ -76,6 +77,7 @@ export class TelegramInputHandler {
         userId,
         chatId: ctx.chat.id,
         requiresAudioReply,
+        voiceId: requiresAudioReply ? config.tts.voice : undefined,
         ctx,
       };
 
@@ -136,11 +138,14 @@ export class TelegramInputHandler {
           ? `${caption}\n\n--- Conteúdo do arquivo ${fileName} ---\n${extractedText}`
           : `--- Conteúdo do arquivo ${fileName} ---\n${extractedText}`;
 
+        const requiresAudioReply = AUDIO_KEYWORDS.test(caption);
+
         const input: ProcessedInput = {
           text: fullText,
           userId,
           chatId: ctx.chat.id,
-          requiresAudioReply: false,
+          requiresAudioReply,
+          voiceId: requiresAudioReply ? config.tts.voice : undefined,
           ctx,
         };
 
@@ -156,8 +161,9 @@ export class TelegramInputHandler {
     this.bot.on(['message:voice', 'message:audio'], async (ctx) => {
       const userId = String(ctx.from!.id);
 
-      if (!this.whisperAvailable) {
-        await ctx.reply('⚠️ Funcionalidade de voz desabilitada: Whisper não encontrado. Envie sua mensagem como texto.');
+      if (!this.whisperAvailable || !this.ffmpegAvailable) {
+        const reason = !this.whisperAvailable ? 'Whisper' : 'ffmpeg';
+        await ctx.reply(`⚠️ Funcionalidade de voz desabilitada: ${reason} não encontrado. Envie sua mensagem como texto.`);
         return;
       }
 
@@ -191,6 +197,7 @@ export class TelegramInputHandler {
           userId,
           chatId: ctx.chat.id,
           requiresAudioReply: true, // Voice input defaults to audio reply
+          voiceId: config.tts.voice, // G-05: inject TTS voice preference
           ctx,
         };
 

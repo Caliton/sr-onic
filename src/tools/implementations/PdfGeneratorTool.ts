@@ -122,6 +122,9 @@ export class PdfGeneratorTool extends BaseTool {
 
       logger.info(MODULE, `PDF saved: ${filePath}`);
 
+      // Step 3: Persist a copy to the archive (survives tmp cleanup)
+      this.archivePdf(filePath, fileName);
+
       // Return file marker for the Agent Loop to pick up
       return `<<<ARQUIVO:${fileName}>>>🎨 Duda aqui! Documento "${fileName}" ficou lindo, no estilo ${style}. Tá pronto!<<<\/ARQUIVO>>>`;
     } catch (err) {
@@ -198,6 +201,21 @@ ${content}`;
       });
     } finally {
       await browser.close();
+    }
+  }
+
+  private archivePdf(srcPath: string, fileName: string): void {
+    try {
+      const archiveDir = path.join(config.paths.activitiesDir, 'pdfs');
+      if (!fs.existsSync(archiveDir)) {
+        fs.mkdirSync(archiveDir, { recursive: true });
+      }
+      const destPath = path.join(archiveDir, fileName);
+      fs.copyFileSync(srcPath, destPath);
+      logger.info(MODULE, `PDF archived: ${destPath}`);
+    } catch (err) {
+      // Non-critical: don't fail the PDF generation if archiving fails
+      logger.warn(MODULE, `Failed to archive PDF: ${err}`);
     }
   }
 }

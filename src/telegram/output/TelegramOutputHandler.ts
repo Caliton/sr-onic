@@ -24,13 +24,14 @@ export class TelegramOutputHandler {
   public async send(
     ctx: Context,
     result: AgentLoopResult,
-    requiresAudioReply: boolean = false
+    requiresAudioReply: boolean = false,
+    voiceId?: string
   ): Promise<void> {
     try {
       // Priority 1: Audio response
       if (requiresAudioReply && result.isAudio !== false) {
-        logger.info(MODULE, 'Routing to AudioOutputStrategy');
-        await this.audioStrategy.send(ctx, result.response);
+        logger.info(MODULE, `Routing to AudioOutputStrategy (voice: ${voiceId || 'default'})`);
+        await this.audioStrategy.send(ctx, result.response, voiceId);
         return;
       }
 

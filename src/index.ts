@@ -13,6 +13,7 @@ import { EvaluateActivityTool } from './tools/implementations/EvaluateActivityTo
 import { MarketAnalysisTool } from './tools/implementations/MarketAnalysisTool';
 import { StrategyTool } from './tools/implementations/StrategyTool';
 import { WebSearchTool } from './tools/implementations/WebSearchTool';
+import { ListActivitiesTool } from './tools/implementations/ListActivitiesTool';
 import { HealthChecker } from './health/HealthChecker';
 import { HeartbeatService } from './health/HeartbeatService';
 import { AgentController } from './agent/AgentController';
@@ -65,6 +66,7 @@ async function bootstrap(): Promise<void> {
   toolRegistry.register(new MarketAnalysisTool(providerFactory));
   toolRegistry.register(new StrategyTool(providerFactory));
   toolRegistry.register(new WebSearchTool());
+  toolRegistry.register(new ListActivitiesTool());
 
   // Step 7: Initialize Agent Controller (Facade)
   logger.info(MODULE, 'Initializing agent controller...');

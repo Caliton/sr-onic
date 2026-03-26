@@ -31,9 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Chromium deps (Puppeteer/Duda)
     libnss3 \
     libnspr4 \
-    libatk1.0-0t64 \
-    libatk-bridge2.0-0t64 \
-    libcups2t64 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
     libdrm2 \
     libxkbcommon0 \
     libxcomposite1 \
@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgbm1 \
     libpango-1.0-0 \
     libcairo2 \
-    libasound2t64 \
+    libasound2 \
     libxshmfence1 \
     # Fontes (pra PDFs bonitos da Duda)
     fonts-liberation \
@@ -58,12 +58,20 @@ RUN groupadd -r sronic && useradd -r -g sronic -m sronic
 
 WORKDIR /app
 
-# Copy package files and install production deps only
+# Copy package files and install production deps (with native compilation)
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && npm ci --omit=dev \
+    && apt-get purge -y python3 make g++ \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
-# Download Puppeteer's Chromium
-RUN npx puppeteer browsers install chrome
+# Download Puppeteer's Chromium (before switching user, but cache to sronic's home)
+# We set PUPPETEER_CACHE_DIR so Chrome is accessible to the sronic user at runtime
+ENV PUPPETEER_CACHE_DIR=/home/sronic/.cache/puppeteer
+RUN npx puppeteer browsers install chrome \
+    && chown -R sronic:sronic /home/sronic/.cache
 
 # Copy built JS from builder stage
 COPY --from=builder /app/dist/ ./dist/

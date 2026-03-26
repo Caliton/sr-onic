@@ -12,11 +12,19 @@ import { logger } from '../utils/logger';
 
 const MODULE = 'AgentController';
 
-const BASE_SYSTEM_PROMPT = `Você é o SrOnic, um agente pessoal de Inteligência Artificial. 
+const BASE_SYSTEM_PROMPT = `Você é o SrOnic, um agente pessoal de Inteligência Artificial.
 Você opera localmente no desktop do seu usuário e recebe comandos pelo Telegram.
-Seja conciso, direto e útil. Responda sempre em português brasileiro, a menos que o usuário solicite outro idioma.
+Responda sempre em português brasileiro, a menos que o usuário solicite outro idioma.
 Quando precisar executar uma ação, use as ferramentas disponíveis.
-Se não souber a resposta, seja honesto e diga que não sabe.`;
+Se não souber a resposta, seja honesto e diga que não sabe.
+
+REGRAS DE BREVIDADE (obrigatórias):
+- Responda com no máximo 2-3 parágrafos curtos para perguntas simples.
+- NÃO faça introduções genéricas como "Claro!", "Com certeza!", "Ótima pergunta!".
+- NÃO repita a pergunta do usuário na resposta.
+- NÃO adicione resumos ou conclusões desnecessárias no final.
+- Vá direto ao ponto. A resposta deve ser proporcional à complexidade da pergunta.
+- Para tarefas com ferramentas, execute a ação e reporte o resultado de forma sucinta.`;
 
 export class AgentController {
   private memoryManager: MemoryManager;
@@ -50,7 +58,7 @@ export class AgentController {
   }
 
   public async handleMessage(input: ProcessedInput): Promise<void> {
-    const { text, userId, ctx, requiresAudioReply } = input;
+    const { text, userId, ctx, requiresAudioReply, voiceId } = input;
 
     try {
       logger.info(MODULE, `Processing message from user ${userId}: "${text.substring(0, 80)}..."`);
@@ -105,8 +113,8 @@ export class AgentController {
       // Save assistant response
       this.memoryManager.saveAssistantMessage(conversation.id, result.response, provider);
 
-      // Send response via output handler
-      await this.outputHandler.send(ctx, result, requiresAudioReply);
+      // Send response via output handler (RF-06: propagate voiceId for TTS)
+      await this.outputHandler.send(ctx, result, requiresAudioReply, voiceId);
 
       logger.info(MODULE, `Response sent for user ${userId}`);
     } catch (err) {

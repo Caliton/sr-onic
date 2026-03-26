@@ -22,8 +22,11 @@ export class GeminiProvider implements ILlmProvider {
     systemPrompt?: string
   ): Promise<LlmResponse> {
     const model = this.client.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       systemInstruction: systemPrompt || undefined,
+      generationConfig: {
+        maxOutputTokens: 2048,
+      },
     });
 
     const geminiHistory = this.buildHistory(messages);

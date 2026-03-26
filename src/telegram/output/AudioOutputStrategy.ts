@@ -14,7 +14,7 @@ export class AudioOutputStrategy {
     this.textFallback = new TextOutputStrategy();
   }
 
-  public async send(ctx: Context, text: string): Promise<void> {
+  public async send(ctx: Context, text: string, voiceId?: string): Promise<void> {
     const tmpDir = config.paths.tmpDir;
     if (!fs.existsSync(tmpDir)) {
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -32,7 +32,7 @@ export class AudioOutputStrategy {
       const cleanText = this.cleanForTts(text);
 
       // Generate audio using edge-tts-universal
-      await this.synthesize(cleanText, audioPath);
+      await this.synthesize(cleanText, audioPath, voiceId);
 
       // Send as voice note
       await ctx.replyWithVoice(new InputFile(audioPath));
@@ -56,11 +56,11 @@ export class AudioOutputStrategy {
     }
   }
 
-  private async synthesize(text: string, outputPath: string): Promise<void> {
+  private async synthesize(text: string, outputPath: string, voiceId?: string): Promise<void> {
     try {
       const { Communicate } = await import('edge-tts-universal');
       const communicate = new Communicate(text, {
-        voice: config.tts.voice,
+        voice: voiceId || config.tts.voice,
       });
 
       const audioChunks: Buffer[] = [];
