@@ -1,0 +1,10 @@
+node_modules
+dist
+tmp
+data
+logs
+.env
+.git
+.gitignore
+*.md
+!.agents/**/*.md

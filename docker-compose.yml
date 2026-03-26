@@ -1,0 +1,53 @@
+# ============================================================
+# 🤖 SrOnic — Docker Compose
+# ============================================================
+
+services:
+  sronic:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sronic
+    restart: unless-stopped
+
+    # Arquivo .env é lido automaticamente
+    env_file:
+      - .env
+
+    # Volumes persistentes (sobrevivem a docker-compose down)
+    volumes:
+      # SQLite database
+      - sronic-data:/app/data
+      # Atividades geradas (Prof. Lina)
+      - sronic-activities:/app/data/activities
+      # Logs
+      - sronic-logs:/app/logs
+      # Skills (pra Guto poder criar novas em runtime)
+      - ./.agents/skills:/app/.agents/skills
+      # Arquivos temporários (PDFs da Duda)
+      - sronic-tmp:/app/tmp
+
+    # Limites de recursos (opcional, ajuste conforme necessário)
+    deploy:
+      resources:
+        limits:
+          memory: 2G    # Limite máximo (Puppeteer + Node)
+        reservations:
+          memory: 512M  # Mínimo garantido
+
+    # Puppeteer precisa de SHM maior
+    shm_size: '512m'
+
+    # Segurança: Puppeteer funciona com sandbox dentro do container
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  sronic-data:
+    name: sronic-data
+  sronic-activities:
+    name: sronic-activities
+  sronic-logs:
+    name: sronic-logs
+  sronic-tmp:
+    name: sronic-tmp

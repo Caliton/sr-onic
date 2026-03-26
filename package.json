@@ -1,0 +1,35 @@
+{
+  "name": "sronic",
+  "version": "1.0.0",
+  "description": "SrOnic - Agente pessoal de IA local via Telegram",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "better-sqlite3": "^11.8.0",
+    "dotenv": "^16.4.7",
+    "edge-tts-universal": "^1.4.0",
+    "grammy": "^1.35.0",
+    "js-yaml": "^4.1.0",
+    "node-cron": "^4.2.1",
+    "openai": "^4.85.0",
+    "pdf-parse": "^1.1.1",
+    "puppeteer": "^24.40.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.13.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pdf-parse": "^1.1.4",
+    "@types/uuid": "^10.0.0",
+    "nodemon": "^3.1.9",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
