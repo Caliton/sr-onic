@@ -43,7 +43,18 @@ export class DeepSeekProvider implements ILlmProvider {
           tool_call_id: msg.toolCallId || 'tool_result',
         });
       } else if (msg.role === 'assistant') {
-        openaiMessages.push({ role: 'assistant', content: msg.content });
+        const payload: OpenAI.Chat.ChatCompletionMessageParam = {
+          role: 'assistant',
+          content: msg.content || null,
+        };
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          payload.tool_calls = msg.toolCalls.map(tc => ({
+            id: tc.id || 'tool_result',
+            type: 'function',
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
+          }));
+        }
+        openaiMessages.push(payload);
       } else {
         openaiMessages.push({ role: 'user', content: msg.content });
       }
@@ -65,7 +76,7 @@ export class DeepSeekProvider implements ILlmProvider {
       model: 'deepseek-chat',
       messages: openaiMessages,
       tools: openaiTools,
-      max_tokens: 4096,
+      max_tokens: 16384,
     });
 
     const choice = response.choices[0];

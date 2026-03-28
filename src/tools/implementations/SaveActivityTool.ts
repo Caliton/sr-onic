@@ -1,5 +1,6 @@
 import { BaseTool } from '../BaseTool';
 import { ProviderFactory } from '../../llm/ProviderFactory';
+import { ActivityPromptBuilder } from './ActivityPromptBuilder';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import fs from 'fs';
@@ -11,8 +12,8 @@ export class SaveActivityTool extends BaseTool {
   public readonly name = 'save_activity';
   public readonly description =
     'Salva uma atividade pedagógica planejada como arquivo .md. ' +
-    'Use com generatePdf=false para salvar e depois avaliar com evaluate_activity. ' +
-    'Após aprovação do Agente Crítico, chame novamente com generatePdf=true para gerar o PDF final.';
+    'Use com generatePdf=true para salvar e gerar o PDF final automaticamente, ' +
+    'ou generatePdf=false para apenas salvar o rascunho.';
 
   public readonly parameters = {
     type: 'object' as const,
@@ -48,8 +49,8 @@ export class SaveActivityTool extends BaseTool {
       generatePdf: {
         type: 'boolean',
         description:
-          'Se true, gera o PDF imediatamente (usar SOMENTE após aprovação do Agente Crítico). ' +
-          'Se false (padrão), apenas salva o .md para avaliação.',
+          'Se true, gera o PDF imediatamente junto com o salvamento. ' +
+          'Se false (padrão), apenas salva o .md como rascunho.',
       },
     },
     required: ['grade', 'theme', 'type', 'title', 'content'],
@@ -107,7 +108,7 @@ ${content}
       if (generatePdf) {
         // Generate PDF (only after critic approval)
         logger.info(MODULE, `Triggering PDF generation for approved activity: ${title}`);
-        const pdfResult = await this.generatePdfFromActivity(mdContent, slug, grade, type);
+        const pdfResult = await this.generatePdfFromActivity(mdContent, slug, grade, type, theme);
         this.markAsDone(filePath);
 
         return JSON.stringify({
@@ -118,10 +119,10 @@ ${content}
           pdfResult,
         });
       } else {
-        // Save only — awaiting critic evaluation
+        // Save only — draft mode
         return JSON.stringify({
           success: true,
-          message: `📝 Prof. Lina: "Planejei a atividade '${title}' com carinho! Agora o Seu Raimundo precisa avaliar antes da gente mandar pra Duda fazer o PDF."`,
+          message: `📝 Prof. Lina: "Planejei a atividade '${title}' com carinho! Quando quiser, é só pedir que eu mando pra Duda fazer o PDF."`,
           specFile: filePath,
           pdfGenerated: false,
           activityContent: content,
@@ -138,35 +139,32 @@ ${content}
     }
   }
 
-  private async generatePdfFromActivity(
+  public async generatePdfFromActivity(
     mdContent: string,
     slug: string,
     grade: string,
-    type: string
+    type: string,
+    _theme: string
   ): Promise<string> {
-    // Get PdfGeneratorTool from registry pattern — we call it directly
-    // by using the ProviderFactory to generate HTML and then Puppeteer to render
     const PdfGeneratorTool = (await import('./PdfGeneratorTool')).PdfGeneratorTool;
     const pdfTool = new PdfGeneratorTool(this.providerFactory);
 
     const pdfFileName = `atividade_${slug}.pdf`;
 
-    // Enrich the content prompt for activity-specific HTML generation
-    const enrichedContent = `ATIVIDADE PEDAGÓGICA PARA IMPRESSÃO — ${grade.replace('-', 'º ')}
+    // Strip teacher-only sections (Objetivos, BNCC, Estilo Visual)
+    const studentContent = this.stripTeacherSections(mdContent);
 
-IMPORTANTE: Este é um material EDUCACIONAL INFANTIL para impressão. O layout deve ser:
-- Lúdico e colorido (mas imprimível em preto e branco também)
-- Fonte grande e legível para crianças (mínimo 14pt no corpo)
-- Instruções claras e simples
-- Espaço para nome e data do aluno no topo
-- Tipo de atividade: ${type}
-- Se for CRUZADINHA: criar grid com bordas visíveis, dicas numeradas
-- Se for CAÇA-PALAVRAS: grid de letras com palavras escondidas, lista de palavras para encontrar
-- Se for COLORIR: criar desenhos com contornos simples usando SVG ou bordas CSS
-- Se for LABIRINTO: criar caminhos com bordas CSS
-- Se for COMPLETAR LACUNAS: texto com espaços sublinhados _______
+    // Check if Lina already embedded an image (from Leo / request_illustration)
+    const hasImage = /<img\s/i.test(studentContent);
 
-${mdContent}`;
+    const builder = new ActivityPromptBuilder();
+    const enrichedContent = builder.build({
+      grade,
+      type,
+      theme: _theme,
+      studentContent,
+      hasImage,
+    });
 
     const result = await pdfTool.execute({
       content: enrichedContent,
@@ -176,6 +174,39 @@ ${mdContent}`;
 
     return result;
   }
+
+  /**
+   * Removes teacher-only sections from the activity markdown.
+   * Keeps: Instruções para o Aluno, Conteúdo da Atividade
+   * Strips: Objetivos Pedagógicos, Habilidades BNCC, Estilo Visual, frontmatter
+   */
+  private stripTeacherSections(mdContent: string): string {
+    // Remove YAML frontmatter
+    let content = mdContent.replace(/^---[\s\S]*?---\s*/m, '');
+
+    // Remove top-level title duplicates (# Título, ## Série)
+    content = content.replace(/^#{1,2}\s+.+$/gm, '');
+
+    // Sections to strip entirely (heading + content until next heading)
+    const teacherSections = [
+      'Objetivos Pedagógicos',
+      'Habilidades BNCC',
+      'Estilo Visual',
+    ];
+
+    for (const section of teacherSections) {
+      // Match ### Section Header + everything until the next ### or end
+      const regex = new RegExp(
+        `###\\s*${section}[\\s\\S]*?(?=###\\s|$)`,
+        'gi'
+      );
+      content = content.replace(regex, '');
+    }
+
+    return content.trim();
+  }
+
+
 
   private markAsDone(filePath: string): void {
     try {

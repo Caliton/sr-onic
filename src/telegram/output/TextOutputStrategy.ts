@@ -7,9 +7,16 @@ const MAX_MESSAGE_LENGTH = 4096;
 // Characters that need escaping in MarkdownV2 plain text segments
 const MD_V2_SPECIAL = /([_*\[\]()~`>#+=|{}.!\\-])/g;
 
+// Safe placeholder prefix/suffix (Unicode private-use chars that won't appear in normal text)
+const P = '\uE000';
+const Q = '\uE001';
+
 export class TextOutputStrategy {
   public async send(ctx: Context, text: string): Promise<void> {
-    const chunks = this.chunkText(text, MAX_MESSAGE_LENGTH);
+    // Strip any <<<ARQUIVO:...>>> markers that leaked into text
+    const cleanText = text.replace(/<<<\/?ARQUIVO[^>]*>>>/g, '').trim();
+
+    const chunks = this.chunkText(cleanText, MAX_MESSAGE_LENGTH);
     let typingInterval: ReturnType<typeof setInterval> | null = null;
 
     if (chunks.length > 1) {
@@ -62,8 +69,7 @@ export class TextOutputStrategy {
     // Step 1: Extract and protect code blocks (```...```)
     const codeBlocks: string[] = [];
     let processed = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
-      const placeholder = `\x00CB${codeBlocks.length}\x00`;
-      // In MarkdownV2 code blocks, no escaping is needed inside
+      const placeholder = `${P}CB${codeBlocks.length}${Q}`;
       codeBlocks.push(`\`\`\`${lang}\n${code}\`\`\``);
       return placeholder;
     });
@@ -71,8 +77,7 @@ export class TextOutputStrategy {
     // Step 2: Extract and protect inline code (`...`)
     const inlineCodes: string[] = [];
     processed = processed.replace(/`([^`\n]+)`/g, (_match, code) => {
-      const placeholder = `\x00IC${inlineCodes.length}\x00`;
-      // In MarkdownV2 inline code, no escaping is needed inside
+      const placeholder = `${P}IC${inlineCodes.length}${Q}`;
       inlineCodes.push(`\`${code}\``);
       return placeholder;
     });
@@ -80,8 +85,7 @@ export class TextOutputStrategy {
     // Step 3: Extract and protect links [text](url)
     const links: string[] = [];
     processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, linkText, url) => {
-      const placeholder = `\x00LK${links.length}\x00`;
-      // Escape text inside brackets, but NOT the URL
+      const placeholder = `${P}LK${links.length}${Q}`;
       links.push(`[${this.escapeV2(linkText)}](${url})`);
       return placeholder;
     });
@@ -89,63 +93,63 @@ export class TextOutputStrategy {
     // Step 4: Convert Markdown formatting to MarkdownV2 equivalents
     // Headers → bold (Telegram has no header support)
     processed = processed.replace(/^#{1,6}\s+(.+)$/gm, (_match, content) => {
-      return `\x00BOLD_S\x00${content}\x00BOLD_E\x00`;
+      return `${P}BS${Q}${content}${P}BE${Q}`;
     });
 
     // Bold: **text** → *text*
     processed = processed.replace(/\*\*(.+?)\*\*/g, (_match, content) => {
-      return `\x00BOLD_S\x00${content}\x00BOLD_E\x00`;
+      return `${P}BS${Q}${content}${P}BE${Q}`;
     });
 
     // Bold: __text__ → *text*
     processed = processed.replace(/__(.+?)__/g, (_match, content) => {
-      return `\x00BOLD_S\x00${content}\x00BOLD_E\x00`;
+      return `${P}BS${Q}${content}${P}BE${Q}`;
     });
 
     // Italic: *text* → _text_ (only single * not already consumed by bold)
     processed = processed.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, (_match, content) => {
-      return `\x00ITAL_S\x00${content}\x00ITAL_E\x00`;
+      return `${P}IS${Q}${content}${P}IE${Q}`;
     });
 
     // Italic: _text_ → _text_ (only single _ not already consumed)
     processed = processed.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, (_match, content) => {
-      return `\x00ITAL_S\x00${content}\x00ITAL_E\x00`;
+      return `${P}IS${Q}${content}${P}IE${Q}`;
     });
 
     // Strikethrough: ~~text~~ → ~text~
     processed = processed.replace(/~~(.+?)~~/g, (_match, content) => {
-      return `\x00STRK_S\x00${content}\x00STRK_E\x00`;
+      return `${P}SS${Q}${content}${P}SE${Q}`;
     });
 
     // Step 5: Escape all special chars in remaining plain text
-    // Split by our placeholders, escape only the non-placeholder parts
-    const parts = processed.split(/(\x00(?:CB|IC|LK)\d+\x00|\x00(?:BOLD|ITAL|STRK)_[SE]\x00)/);
+    const placeholderRegex = new RegExp(`(${P}(?:CB|IC|LK)\\d+${Q}|${P}(?:BS|BE|IS|IE|SS|SE)${Q})`, 'g');
+    const parts = processed.split(placeholderRegex);
     const escaped = parts.map((part) => {
-      // Keep placeholders as-is
-      if (/^\x00(CB|IC|LK)\d+\x00$/.test(part)) return part;
-      if (/^\x00(BOLD|ITAL|STRK)_[SE]\x00$/.test(part)) return part;
-      // Escape plain text
+      if (placeholderRegex.test(part)) {
+        placeholderRegex.lastIndex = 0; // Reset regex state
+        return part;
+      }
       return this.escapeV2(part);
     }).join('');
 
     // Step 6: Restore formatting markers
     let result = escaped
-      .replace(/\x00BOLD_S\x00/g, '*')
-      .replace(/\x00BOLD_E\x00/g, '*')
-      .replace(/\x00ITAL_S\x00/g, '_')
-      .replace(/\x00ITAL_E\x00/g, '_')
-      .replace(/\x00STRK_S\x00/g, '~')
-      .replace(/\x00STRK_E\x00/g, '~');
+      .replace(new RegExp(`${P}BS${Q}`, 'g'), '*')
+      .replace(new RegExp(`${P}BE${Q}`, 'g'), '*')
+      .replace(new RegExp(`${P}IS${Q}`, 'g'), '_')
+      .replace(new RegExp(`${P}IE${Q}`, 'g'), '_')
+      .replace(new RegExp(`${P}SS${Q}`, 'g'), '~')
+      .replace(new RegExp(`${P}SE${Q}`, 'g'), '~');
 
     // Step 7: Restore protected segments
     for (let i = 0; i < links.length; i++) {
-      result = result.replace(`\x00LK${i}\x00`, links[i]);
+      result = result.replace(`${P}LK${i}${Q}`, links[i]);
     }
     for (let i = 0; i < inlineCodes.length; i++) {
-      result = result.replace(`\x00IC${i}\x00`, inlineCodes[i]);
+      result = result.replace(`${P}IC${i}${Q}`, inlineCodes[i]);
     }
     for (let i = 0; i < codeBlocks.length; i++) {
-      result = result.replace(`\x00CB${i}\x00`, codeBlocks[i]);
+      result = result.replace(`${P}CB${i}${Q}`, codeBlocks[i]);
     }
 
     return result;
@@ -168,15 +172,11 @@ export class TextOutputStrategy {
         break;
       }
 
-      // Find a good split point (newline or space before limit)
       let splitAt = maxLen;
-
-      // Try newline first
       const lastNewline = remaining.lastIndexOf('\n', maxLen);
       if (lastNewline > maxLen * 0.5) {
         splitAt = lastNewline + 1;
       } else {
-        // Try space
         const lastSpace = remaining.lastIndexOf(' ', maxLen);
         if (lastSpace > maxLen * 0.5) {
           splitAt = lastSpace + 1;

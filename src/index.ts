@@ -9,11 +9,12 @@ import { CurrentTimeTool } from './tools/implementations/CurrentTimeTool';
 import { PdfGeneratorTool } from './tools/implementations/PdfGeneratorTool';
 import { CreateSkillTool } from './tools/implementations/CreateSkillTool';
 import { SaveActivityTool } from './tools/implementations/SaveActivityTool';
-import { EvaluateActivityTool } from './tools/implementations/EvaluateActivityTool';
+
 import { MarketAnalysisTool } from './tools/implementations/MarketAnalysisTool';
 import { StrategyTool } from './tools/implementations/StrategyTool';
 import { WebSearchTool } from './tools/implementations/WebSearchTool';
 import { ListActivitiesTool } from './tools/implementations/ListActivitiesTool';
+import { RequestIllustrationTool } from './tools/implementations/RequestIllustrationTool';
 import { HealthChecker } from './health/HealthChecker';
 import { HeartbeatService } from './health/HeartbeatService';
 import { AgentController } from './agent/AgentController';
@@ -62,11 +63,12 @@ async function bootstrap(): Promise<void> {
   toolRegistry.register(new PdfGeneratorTool(providerFactory));
   toolRegistry.register(new CreateSkillTool());
   toolRegistry.register(new SaveActivityTool(providerFactory));
-  toolRegistry.register(new EvaluateActivityTool(providerFactory));
+
   toolRegistry.register(new MarketAnalysisTool(providerFactory));
   toolRegistry.register(new StrategyTool(providerFactory));
   toolRegistry.register(new WebSearchTool());
   toolRegistry.register(new ListActivitiesTool());
+  toolRegistry.register(new RequestIllustrationTool());
 
   // Step 7: Initialize Agent Controller (Facade)
   logger.info(MODULE, 'Initializing agent controller...');
@@ -118,10 +120,10 @@ async function bootstrap(): Promise<void> {
   }
   heartbeat.start();
 
-  // Register ActivityWatcher — monitors ./data/activities/ for manually added .md files
+  // Register ActivityWatcher — monitors ./data/activities/ for pending .md files
   heartbeat.registerWatcher({
     name: 'activity_watcher',
-    description: 'Monitora ./data/activities/ por atividades .md pendentes',
+    description: 'Monitora ./data/activities/ por atividades .md pendentes para gerar PDF',
     alertOnFailure: false,
     check: async () => {
       const dir = config.paths.activitiesDir;
@@ -132,40 +134,51 @@ async function bootstrap(): Promise<void> {
         const filePath = path.join(dir, file);
         const content = fs.readFileSync(filePath, 'utf-8');
 
-        // Only process pending files
-        if (!content.includes('status: pending')) continue;
+        // Only process files explicitly marked as pending_review (exact match via regex)
+        if (!/^status:\s*pending_review\s*$/m.test(content)) continue;
 
         logger.info(MODULE, `[ActivityWatcher] Found pending activity: ${file}`);
 
-        // Trigger PDF generation
-        const pdfTool = toolRegistry.getTool('generate_pdf') as PdfGeneratorTool;
-        if (pdfTool) {
-          const slug = file.replace('.md', '');
-          try {
-            await pdfTool.execute({
-              content: content,
-              fileName: `atividade_${slug}.pdf`,
-              style: 'moderno',
-            });
+        const saveActivityTool = toolRegistry.getTool('save_activity') as SaveActivityTool;
+        if (!saveActivityTool) continue;
 
-            // Mark as done
-            const updated = content.replace('status: pending', 'status: done');
-            fs.writeFileSync(filePath, updated, 'utf-8');
+        try {
+          // Extract frontmatter fields
+          const gradeMatch = content.match(/^grade:\s*(.+)$/m);
+          const themeMatch = content.match(/^theme:\s*(.+)$/m);
+          const typeMatch = content.match(/^type:\s*(.+)$/m);
+          const titleMatch = content.match(/^title:\s*"?(.+?)"?\s*$/m);
+          const bodyMatch = content.match(/^---[\s\S]*?---\s*([\s\S]*)$/m);
 
-            // Notify owner
+          const grade = gradeMatch?.[1]?.trim() || '1-ano';
+          const theme = themeMatch?.[1]?.trim() || 'geral';
+          const type = typeMatch?.[1]?.trim() || 'colorir';
+          const title = titleMatch?.[1]?.trim() || file.replace('.md', '');
+          const body = bodyMatch?.[1]?.trim() || content;
+
+          const slug = `${grade}_${type}_${theme}`.replace(/\s+/g, '-').toLowerCase();
+
+          // Generate PDF using the enriched prompt pipeline (strips teacher sections, adds SVG fallback, etc.)
+          const pdfResult = await saveActivityTool.generatePdfFromActivity(content, slug, grade, type, theme);
+          logger.info(MODULE, `[ActivityWatcher] PDF generated for: ${title}`);
+
+          // Mark original file as done
+          const updated = content.replace(/^status:\s*pending_review\s*$/m, 'status: done');
+          fs.writeFileSync(filePath, updated, 'utf-8');
+
+          // Notify owner via Telegram
+          const tmpPdfPath = path.join(config.paths.tmpDir, `atividade_${slug}.pdf`);
+          if (fs.existsSync(tmpPdfPath)) {
             const { Bot } = await import('grammy');
             const bot = new Bot(config.telegram.botToken);
-            const tmpPdfPath = path.join(config.paths.tmpDir, `atividade_${slug}.pdf`);
-            if (fs.existsSync(tmpPdfPath)) {
-              const { InputFile } = await import('grammy');
-              await bot.api.sendDocument(ownerId, new InputFile(tmpPdfPath, `atividade_${slug}.pdf`), {
-                caption: `📄 Atividade gerada automaticamente: ${file}`,
-              });
-              fs.unlinkSync(tmpPdfPath);
-            }
-          } catch (err) {
-            logger.error(MODULE, `[ActivityWatcher] Failed to process ${file}: ${err}`);
+            const { InputFile } = await import('grammy');
+            await bot.api.sendDocument(ownerId, new InputFile(tmpPdfPath, `atividade_${slug}.pdf`), {
+              caption: `📄 Atividade gerada: ${title}`,
+            });
+            fs.unlinkSync(tmpPdfPath);
           }
+        } catch (err) {
+          logger.error(MODULE, `[ActivityWatcher] Failed to process ${file}: ${err}`);
         }
       }
       return null;

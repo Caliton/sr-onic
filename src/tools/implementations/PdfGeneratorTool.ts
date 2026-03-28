@@ -1,5 +1,6 @@
 import { BaseTool } from '../BaseTool';
 import { ProviderFactory } from '../../llm/ProviderFactory';
+import { ACTIVITY_SYSTEM_PROMPT } from './ActivityPromptBuilder';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import puppeteer from 'puppeteer';
@@ -7,28 +8,6 @@ import fs from 'fs';
 import path from 'path';
 
 const MODULE = 'Duda';
-
-const HTML_SYSTEM_PROMPT = `Você é a **Duda**, a designer da equipe do SrOnic. Você é apaixonada por tipografia, layout e documentos bonitos.
-
-Sua especialidade é transformar conteúdo textual em HTML profissional para conversão em PDF. Você é perfeccionista — nenhum documento sai feio da sua mão.
-
-REGRAS OBRIGATÓRIAS:
-1. Retorne APENAS o HTML completo (<!DOCTYPE html>...</html>). Sem explicações, sem markdown, sem blocos de código.
-2. Use CSS inline no <style> dentro do <head>. Nunca use links externos.
-3. Use a diretiva @page para definir margens do PDF: @page { margin: 2cm 2.5cm; }
-4. Use fontes seguras: 'Segoe UI', Arial, Helvetica, sans-serif.
-5. O body deve ter font-size: 12pt, line-height: 1.6, color: #2c3e50.
-6. Use page-break-before/after para controlar paginação em seções longas.
-7. Cabeçalhos (h1, h2, h3) devem ter cores profissionais (#1a365d ou #2c5282).
-8. Tabelas devem ter border-collapse: collapse, bordas sutis (#e2e8f0), padding adequado.
-9. Listas devem ter espaçamento confortável (margin-bottom nos li).
-10. O documento deve parecer PROFISSIONAL e IMPRESSO — como um relatório corporativo de alta qualidade.
-
-ESTILOS DISPONÍVEIS:
-- "formal": Cores sóbrias (#1a365d), serif para títulos, layout corporativo rigoroso.
-- "moderno": Gradientes sutis, cards com box-shadow, fonte sans-serif, visual tech.
-- "minimalista": Muito espaço em branco, tipografia limpa, cores restritas a preto/cinza.
-- Se nenhum estilo for especificado, use "moderno" como padrão.`;
 
 export class PdfGeneratorTool extends BaseTool {
   public readonly name = 'generate_pdf';
@@ -117,6 +96,14 @@ export class PdfGeneratorTool extends BaseTool {
 
       logger.info(MODULE, `HTML generated: ${html.length} characters`);
 
+      // Validate: warn if HTML body seems empty (no visual content)
+      const hasVisualContent = /<svg[\s>]/i.test(html) || /<img[\s>]/i.test(html) || /<table[\s>]/i.test(html);
+      const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+      const bodyTextLength = bodyMatch ? bodyMatch[1].replace(/<[^>]+>/g, '').trim().length : 0;
+      if (!hasVisualContent && bodyTextLength < 200) {
+        logger.warn(MODULE, `HTML body appears mostly empty (${bodyTextLength} chars, no SVG/img/table). PDF may look blank.`);
+      }
+
       // Step 2: Render HTML to PDF via Puppeteer
       await this.renderPdf(html, filePath);
 
@@ -157,15 +144,67 @@ ${content}`;
     const response = await provider.chat(
       [{ role: 'user', content: userPrompt }],
       [], // no tools needed
-      HTML_SYSTEM_PROMPT
+      ACTIVITY_SYSTEM_PROMPT
     );
 
     let html = response.text || '';
 
-    // Clean up if LLM wrapped in code blocks
-    html = html.replace(/^```html?\s*/i, '').replace(/\s*```\s*$/i, '');
+    logger.info(MODULE, `Raw LLM response length: ${html.length} chars`);
+
+    // Extract HTML from response — the LLM may wrap it in markdown code blocks
+    // or include thinking/explanation text before/after the HTML
+    html = this.extractHtml(html);
+
+    // Validate: the HTML must at least contain basic structure
+    if (!html || !/<html[\s>]/i.test(html)) {
+      logger.warn(MODULE, `No valid HTML structure found in LLM response. First 500 chars: ${(response.text || '').substring(0, 500)}`);
+      return '';
+    }
+
+    // If HTML is truncated (missing closing tags), try to close it
+    if (!/<\/html\s*>/i.test(html)) {
+      logger.warn(MODULE, 'HTML appears truncated (missing </html>). Attempting to close tags.');
+      // Close any open body and html tags
+      if (!/<\/body\s*>/i.test(html)) {
+        html += '\n</body>';
+      }
+      html += '\n</html>';
+    }
+
+    logger.info(MODULE, `Cleaned HTML length: ${html.length} chars`);
 
     return html.trim();
+  }
+
+  /**
+   * Extracts valid HTML from LLM response that may contain markdown code blocks,
+   * thinking blocks, or extra text around the actual HTML.
+   */
+  private extractHtml(raw: string): string {
+    // Strategy 1: Extract from markdown code block (```html ... ```)
+    const codeBlockMatch = raw.match(/```html?\s*\n?([\s\S]*?)```/i);
+    if (codeBlockMatch) {
+      logger.info(MODULE, 'Extracted HTML from markdown code block');
+      return codeBlockMatch[1].trim();
+    }
+
+    // Strategy 2: Extract the HTML document directly (<!DOCTYPE or <html to </html>)
+    const docMatch = raw.match(/(<!DOCTYPE[\s\S]*<\/html\s*>)/i);
+    if (docMatch) {
+      logger.info(MODULE, 'Extracted HTML document from raw response');
+      return docMatch[1].trim();
+    }
+
+    // Strategy 3: Partial match — HTML starts but may be truncated
+    const partialMatch = raw.match(/(<!DOCTYPE[\s\S]*)/i) || raw.match(/(<html[\s\S]*)/i);
+    if (partialMatch) {
+      logger.info(MODULE, 'Extracted partial/truncated HTML from response');
+      return partialMatch[1].trim();
+    }
+
+    // Strategy 4: Strip leading/trailing code block markers (simple case)
+    let cleaned = raw.replace(/^```html?\s*/i, '').replace(/\s*```\s*$/i, '');
+    return cleaned.trim();
   }
 
   private async renderPdf(html: string, outputPath: string): Promise<void> {
@@ -175,6 +214,10 @@ ${content}`;
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    // Convert local image file paths to base64 data URIs
+    // Puppeteer's sandboxed Chromium can't access local filesystem paths
+    const processedHtml = this.inlineLocalImages(html);
+
     const browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
@@ -183,7 +226,7 @@ ${content}`;
     try {
       const page = await browser.newPage();
 
-      await page.setContent(html, {
+      await page.setContent(processedHtml, {
         waitUntil: 'networkidle0',
         timeout: 30000,
       });
@@ -202,6 +245,39 @@ ${content}`;
     } finally {
       await browser.close();
     }
+  }
+
+  /**
+   * Convert local image file paths (e.g. data/activities/images/xxx.png) to
+   * base64 data URIs so Puppeteer's sandboxed Chromium can render them.
+   */
+  private inlineLocalImages(html: string): string {
+    return html.replace(
+      /(<img\s[^>]*src=["'])([^"']+\.(?:png|jpg|jpeg|gif|svg))(["'][^>]*>)/gi,
+      (_match, prefix, src, suffix) => {
+        // Skip already-inlined data URIs and external URLs
+        if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
+          return `${prefix}${src}${suffix}`;
+        }
+
+        // Resolve absolute path from project root
+        const absPath = path.isAbsolute(src) ? src : path.resolve(src);
+
+        try {
+          if (fs.existsSync(absPath)) {
+            const ext = path.extname(absPath).slice(1).toLowerCase();
+            const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+            const b64 = fs.readFileSync(absPath).toString('base64');
+            logger.info(MODULE, `Inlined local image: ${src}`);
+            return `${prefix}data:${mime};base64,${b64}${suffix}`;
+          }
+        } catch (err) {
+          logger.warn(MODULE, `Failed to inline image ${src}: ${err}`);
+        }
+
+        return `${prefix}${src}${suffix}`;
+      }
+    );
   }
 
   private archivePdf(srcPath: string, fileName: string): void {

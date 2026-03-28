@@ -1,4 +1,5 @@
 export interface ToolCall {
+  id?: string;
   name: string;
   arguments: Record<string, unknown>;
 }
@@ -23,6 +24,7 @@ export interface ChatMessage {
   content: string;
   toolCallId?: string;
   toolName?: string;
+  toolCalls?: ToolCall[];
 }
 
 export interface ILlmProvider {

@@ -25,7 +25,7 @@ export class GeminiProvider implements ILlmProvider {
       model: 'gemini-2.5-flash',
       systemInstruction: systemPrompt || undefined,
       generationConfig: {
-        maxOutputTokens: 2048,
+        maxOutputTokens: 65536,
       },
     });
 
@@ -45,8 +45,12 @@ export class GeminiProvider implements ILlmProvider {
     const response = result.response;
     const candidate = response.candidates?.[0];
 
-    if (!candidate || !candidate.content) {
-      return { text: response.text() || 'Sem resposta do Gemini.' };
+    if (!candidate || !candidate.content || !Array.isArray(candidate.content.parts)) {
+      try {
+        return { text: response.text() || 'Sem resposta do Gemini.' };
+      } catch {
+        return { text: 'Resposta vazia ou bloqueada pelo Gemini.' };
+      }
     }
 
     const toolCalls: ToolCall[] = [];
@@ -90,10 +94,20 @@ export class GeminiProvider implements ILlmProvider {
         });
       } else {
         const role = msg.role === 'assistant' ? 'model' : 'user';
-        history.push({
-          role,
-          parts: [{ text: msg.content }],
-        });
+        
+        if (role === 'model' && msg.toolCalls && msg.toolCalls.length > 0) {
+          history.push({
+            role,
+            parts: msg.toolCalls.map(tc => ({
+              functionCall: { name: tc.name, args: tc.arguments }
+            })),
+          });
+        } else {
+          history.push({
+            role,
+            parts: [{ text: msg.content || " " }],
+          });
+        }
       }
     }
 

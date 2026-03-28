@@ -75,22 +75,30 @@ export class AgentLoop {
 
         // Process tool calls
         if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
-          for (const toolCall of llmResponse.toolCalls) {
+          // Normalize tool calls to ensure they have an ID (Gemini doesn't provide them natively)
+          const normalizedToolCalls = llmResponse.toolCalls.map(tc => ({
+            ...tc,
+            id: tc.id || `call_${Math.random().toString(36).substring(7)}`
+          }));
+
+          // Inject the assistant message containing the tool calls
+          currentMessages.push({
+            role: 'assistant',
+            content: '', // Empty content, but carries tool calls
+            toolCalls: normalizedToolCalls,
+          });
+
+          for (const toolCall of normalizedToolCalls) {
             logger.info(MODULE, `[Action] Tool: ${toolCall.name} | Args: ${JSON.stringify(toolCall.arguments)}`);
 
             const observation = await this.executeTool(toolCall);
             logger.info(MODULE, `[Observation] ${observation.substring(0, 200)}...`);
 
-            // Inject tool result back into messages
-            currentMessages.push({
-              role: 'assistant',
-              content: `Chamando ferramenta: ${toolCall.name}`,
-            });
             currentMessages.push({
               role: 'tool',
               content: observation,
               toolName: toolCall.name,
-              toolCallId: toolCall.name,
+              toolCallId: toolCall.id,
             });
           }
         }
@@ -160,17 +168,24 @@ export class AgentLoop {
   }
 
   private parseResponse(text: string): AgentLoopResult {
-    // Check for file output markers
+    // Check for file output markers (full pattern)
     const fileMatch = text.match(/<<<ARQUIVO:(.+?)>>>([\s\S]+?)<<<\/ARQUIVO>>>/);
     if (fileMatch) {
+      // Extract the text outside the marker as extra context
+      const textOutside = text.replace(/<<<ARQUIVO:(.+?)>>>[\s\S]+?<<<\/ARQUIVO>>>/, '').trim();
+      const response = textOutside || fileMatch[2].trim();
+
       return {
-        response: fileMatch[2].trim(),
+        response,
         isFile: true,
         fileName: fileMatch[1].trim(),
       };
     }
 
-    return { response: text };
+    // Strip any partial/leaked <<<ARQUIVO>>> markers from the text
+    const cleanText = text.replace(/<<<\/?ARQUIVO[^>]*>>>/g, '').trim();
+
+    return { response: cleanText || text };
   }
 
   private startTypingIndicator(ctx: Context): void {

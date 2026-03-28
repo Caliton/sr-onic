@@ -13,6 +13,9 @@ export interface AppConfig {
     deepseekApiKey: string;
     defaultProvider: string;
   };
+  openai: {
+    apiKey: string;
+  };
   agent: {
     maxIterations: number;
     pipelineTimeoutMs: number;
@@ -62,8 +65,11 @@ export const config: AppConfig = {
     deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
     defaultProvider: process.env.DEFAULT_PROVIDER || 'gemini',
   },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || '',
+  },
   agent: {
-    maxIterations: parseInt(process.env.MAX_ITERATIONS || '5', 10),
+    maxIterations: parseInt(process.env.MAX_ITERATIONS || '10', 10),
     pipelineTimeoutMs: parseInt(process.env.PIPELINE_TIMEOUT_MS || '300000', 10),
   },
   memory: {
